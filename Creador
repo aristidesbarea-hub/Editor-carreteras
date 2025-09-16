@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Editor de Carreteras</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    svg { border: 1px solid #333; max-width: 95%; height: auto; background: #f2f2f2; }
+    .current { stroke: red; stroke-width: 3; fill: none; }
+    .saved { stroke: blue; stroke-width: 3; fill: none; }
+    #coords { width: 90%; height: 150px; margin-top: 15px; }
+    button { margin: 5px; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+
+<h2>Editor de Carreteras</h2>
+<p>Haz clic en el mapa para añadir puntos de la carretera.</p>
+
+<svg id="map" viewBox="0 0 1000 800">
+  <image href="MapaBase.png" x="0" y="0" width="1000" height="800"/>
+  <polyline id="currentRoad" class="current" points=""/>
+</svg>
+
+<div>
+  <button onclick="undoPoint()">⟲ Deshacer punto</button>
+  <button onclick="saveRoad()">💾 Guardar carretera</button>
+  <button onclick="newRoad()">➕ Nueva carretera</button>
+  <button onclick="downloadJSON()">📁 Guardar archivo</button>
+  <input type="file" accept=".json" onchange="loadJSON(event)">
+</div>
+
+<textarea id="coords" readonly></textarea>
+
+<script>
+let points = [];
+let roads = [];
+let roadCounter = 1;
+
+const svg = document.getElementById("map");
+const currentPoly = document.getElementById("currentRoad");
+const output = document.getElementById("coords");
+
+// Obtener coordenadas relativas al SVG
+function getSVGCoords(evt) {
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX;
+  pt.y = evt.clientY;
+  const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+  return [Math.round(svgP.x), Math.round(svgP.y)];
+}
+
+// Dibujar puntos al hacer clic
+svg.addEventListener("click", (e) => {
+  const [x, y] = getSVGCoords(e);
+  points.push([x, y]);
+  currentPoly.setAttribute("points", points.map(p => p.join(",")).join(" "));
+});
+
+// Deshacer último punto
+function undoPoint() {
+  points.pop();
+  currentPoly.setAttribute("points", points.map(p => p.join(",")).join(" "));
+}
+
+// Guardar carretera actual
+function saveRoad() {
+  if (points.length > 1) {
+    // Aquí aparece el cuadro de diálogo
+    let roadName = window.prompt("Introduce el nombre de la carretera:", "Carretera " + roadCounter);
+
+    if (!roadName || roadName.trim() === "") {
+      roadName = "Carretera " + roadCounter;
+    }
+    roadCounter++;
+
+    roads.push({ nombre: roadName, puntos: points.slice() });
+
+    // Crear polyline azul en el SVG
+    const polySaved = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polySaved.setAttribute("points", points.map(p => p.join(",")).join(" "));
+    polySaved.setAttribute("class", "saved");
+    polySaved.setAttribute("data-nombre", roadName);
+    svg.appendChild(polySaved);
+
+    output.value = JSON.stringify({ carreteras: roads }, null, 2);
+    newRoad();
+  } else {
+    alert("Debes poner al menos 2 puntos para guardar una carretera.");
+  }
+}
+
+// Nueva carretera (reiniciar puntos rojos)
+function newRoad() {
+  points = [];
+  currentPoly.setAttribute("points", "");
+}
+
+// Descargar JSON
+function downloadJSON() {
+  if (roads.length === 0) return alert("No hay carreteras para guardar.");
+  const dataStr = JSON.stringify({ carreteras: roads }, null, 2);
+  const blob = new Blob([dataStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "carreteras.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Cargar JSON
+function loadJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const content = JSON.parse(e.target.result);
+    roads = [];
+    roadCounter = 1;
+
+    Array.from(svg.querySelectorAll(".saved")).forEach(el => el.remove());
+
+    content.carreteras.forEach(c => {
+      roads.push(c);
+      const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      poly.setAttribute("points", c.puntos.map(p => p.join(",")).join(" "));
+      poly.setAttribute("class", "saved");
+      poly.setAttribute("data-nombre", c.nombre);
+      svg.appendChild(poly);
+      roadCounter++;
+    });
+
+    output.value = JSON.stringify(content, null, 2);
+    newRoad();
+  };
+  reader.readAsText(file);
+}
+</script>
+
+</body>
+</html>
