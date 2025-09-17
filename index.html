@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Editor de Carreteras con Zoom y Panel Lateral</title>
+  <title>Editor de Carreteras con Zoom Perfecto</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; }
     #sidebar {
@@ -90,6 +90,7 @@ function getSVGCoords(evt) {
   pt.x = evt.clientX;
   pt.y = evt.clientY;
   let svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+  // Ajustar por zoom y translación
   svgP.x = (svgP.x - translateX) / scale;
   svgP.y = (svgP.y - translateY) / scale;
   return svgP;
@@ -99,15 +100,24 @@ function updateTransform() {
   mapGroup.setAttribute("transform", `translate(${translateX},${translateY}) scale(${scale})`);
 }
 
-// --- ZOOM ---
+// --- ZOOM PERFECTO CENTRADO EN CURSOR ---
 svg.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const {x: mouseX, y: mouseY} = getSVGCoords(e);
+
+  // Coordenadas del cursor en SVG sin transformar
+  const pt = svg.createSVGPoint();
+  pt.x = e.clientX;
+  pt.y = e.clientY;
+  const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+
   const zoomFactor = 1.1;
   const delta = e.deltaY < 0 ? zoomFactor : 1 / zoomFactor;
-  translateX = mouseX - (mouseX - translateX) * delta;
-  translateY = mouseY - (mouseY - translateY) * delta;
+
+  // Ajustar translate para que el punto bajo el cursor permanezca fijo
+  translateX = svgP.x - (svgP.x - translateX) * delta;
+  translateY = svgP.y - (svgP.y - translateY) * delta;
   scale *= delta;
+
   updateTransform();
 });
 
@@ -273,4 +283,5 @@ function updatePointsColors() {
 
 </body>
 </html>
+
 
