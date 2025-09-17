@@ -1,39 +1,45 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <title>Editor de Carreteras con Zoom Perfecto</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; }
-    #sidebar {
-      width: 250px;
-      background: #f9f9f9;
-      border-right: 1px solid #ccc;
-      padding: 10px;
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      overflow-y: auto;
-    }
-    #mapContainer {
-      flex: 1;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background: #ddd;
-    }
-    svg { border: 1px solid #333; max-width: 95%; max-height: 95%; background: #f2f2f2; }
-    .current { stroke: red; stroke-width: 3; fill: none; }
-    .saved { stroke: blue; stroke-width: 3; fill: none; }
-    .editable { stroke: green; stroke-width: 3; fill: none; }
-    .point { fill: darkgreen; cursor: pointer; }
-    .selected { fill: yellow; }
-    button, select { width: 100%; padding: 6px; margin-bottom: 5px; }
-    textarea { width: 100%; height: 120px; resize: none; }
-    h2 { font-size: 18px; margin: 0 0 10px 0; }
-    p { font-size: 14px; margin: 0 0 10px 0; }
-  </style>
+<meta charset="UTF-8">
+<title>Editor de Carreteras con Segmentos</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; height: 100vh; display: flex; }
+  #sidebar {
+    width: 250px;
+    background: #f9f9f9;
+    border-right: 1px solid #ccc;
+    padding: 10px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+  }
+  #mapContainer {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #ddd;
+  }
+  svg { border: 1px solid #333; max-width: 95%; max-height: 95%; background: #f2f2f2; }
+  .current, .saved, .editable {
+    stroke-width: 3;
+    fill: none;
+    vector-effect: non-scaling-stroke;
+  }
+  .current { stroke: red; }
+  .saved { stroke: blue; }
+  .editable { stroke: blue; }
+  .point { fill: darkgreen; cursor: pointer; }
+  .selectedPoint { fill: yellow; }
+  .selectedSegment { stroke: orange; stroke-width: 4; }
+  button, select { width: 100%; padding: 6px; margin-bottom: 5px; }
+  textarea { width: 100%; height: 120px; resize: none; }
+  h2 { font-size: 18px; margin: 0 0 10px 0; }
+  p { font-size: 14px; margin: 0 0 10px 0; }
+</style>
 </head>
 <body>
 
@@ -41,10 +47,11 @@
   <h2>Editor de Carreteras</h2>
   <p>Haz clic en el mapa para añadir puntos. Usa la rueda del ratón para hacer zoom.</p>
 
-  <button onclick="undoPoint()">⟲ Deshacer punto</button>
-  <button onclick="saveRoad()">💾 Guardar carretera</button>
   <button onclick="newRoad()">➕ Nueva carretera</button>
+  <button onclick="newSegment()">➕ Nuevo segmento</button>
+  <button onclick="saveRoad()">💾 Guardar cambios</button>
   <button onclick="downloadJSON()">📁 Guardar archivo</button>
+  <button onclick="deleteRoad()">❌ Eliminar carretera</button>
   <input type="file" accept=".json" onchange="loadJSON(event)">
 
   <label for="roadSelect">Modificar carretera:</label>
@@ -59,38 +66,34 @@
   <svg id="map" viewBox="0 0 1000 800">
     <g id="mapGroup" transform="translate(0,0) scale(1)">
       <image href="MapaBase.png" x="0" y="0" width="1000" height="800"/>
-      <polyline id="currentRoad" class="current" points=""/>
     </g>
   </svg>
 </div>
 
 <script>
-let points = [];
 let roads = [];
 let roadCounter = 1;
 
 const svg = document.getElementById("map");
 const mapGroup = document.getElementById("mapGroup");
-const currentPoly = document.getElementById("currentRoad");
 const output = document.getElementById("coords");
 const roadSelect = document.getElementById("roadSelect");
 
 let selectedRoad = null;
+let selectedSegment = null;
 let selectedPoint = null;
 let dragging = false;
 
-// Variables de zoom
+// Zoom
 let scale = 1;
 let translateX = 0;
 let translateY = 0;
 
-// --- FUNCIONES ---
 function getSVGCoords(evt) {
   const pt = svg.createSVGPoint();
   pt.x = evt.clientX;
   pt.y = evt.clientY;
   let svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
-  // Ajustar por zoom y translación
   svgP.x = (svgP.x - translateX) / scale;
   svgP.y = (svgP.y - translateY) / scale;
   return svgP;
@@ -98,190 +101,216 @@ function getSVGCoords(evt) {
 
 function updateTransform() {
   mapGroup.setAttribute("transform", `translate(${translateX},${translateY}) scale(${scale})`);
+  Array.from(mapGroup.querySelectorAll(".point")).forEach(c => c.setAttribute("r", 6/scale));
 }
 
-// --- ZOOM PERFECTO CENTRADO EN CURSOR ---
 svg.addEventListener("wheel", (e) => {
   e.preventDefault();
-
-  // Coordenadas del cursor en SVG sin transformar
   const pt = svg.createSVGPoint();
   pt.x = e.clientX;
   pt.y = e.clientY;
   const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
-
   const zoomFactor = 1.1;
-  const delta = e.deltaY < 0 ? zoomFactor : 1 / zoomFactor;
-
-  // Ajustar translate para que el punto bajo el cursor permanezca fijo
+  const delta = e.deltaY < 0 ? zoomFactor : 1/zoomFactor;
   translateX = svgP.x - (svgP.x - translateX) * delta;
   translateY = svgP.y - (svgP.y - translateY) * delta;
   scale *= delta;
-
   updateTransform();
 });
 
-// --- EDICIÓN DE CARRETERAS ---
-svg.addEventListener("click", (e) => {
-  if (selectedRoad) return;
-  const {x, y} = getSVGCoords(e);
-  points.push([x, y]);
-  currentPoly.setAttribute("points", points.map(p => p.join(",")).join(" "));
-});
-
-function undoPoint() {
-  points.pop();
-  currentPoly.setAttribute("points", points.map(p => p.join(",")).join(" "));
-}
-
-function saveRoad() {
-  if (points.length > 1) {
-    let roadName = window.prompt("Introduce el nombre de la carretera:", "Carretera " + roadCounter);
-    if (!roadName || roadName.trim() === "") roadName = "Carretera " + roadCounter;
-    roadCounter++;
-    roads.push({ nombre: roadName, puntos: points.slice() });
-
-    const polySaved = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    polySaved.setAttribute("points", points.map(p => p.join(",")).join(" "));
-    polySaved.setAttribute("class", "saved");
-    polySaved.setAttribute("data-nombre", roadName);
-    mapGroup.appendChild(polySaved);
-
-    const option = document.createElement("option");
-    option.value = roadName;
-    option.textContent = roadName;
-    roadSelect.appendChild(option);
-
-    output.value = JSON.stringify({ carreteras: roads }, null, 2);
-    newRoad();
-  } else {
-    alert("Debes poner al menos 2 puntos para guardar una carretera.");
-  }
-}
-
+// --- CREACIÓN DE CARRETERAS Y SEGMENTOS ---
 function newRoad() {
-  points = [];
-  currentPoly.setAttribute("points", "");
-  selectedRoad = null;
-  selectedPoint = null;
+  let roadName = window.prompt("Introduce el nombre de la carretera:", "Carretera " + roadCounter);
+  if (!roadName || roadName.trim()==="") roadName = "Carretera " + roadCounter;
+  roadCounter++;
+  let road = { nombre: roadName, segmentos: [{ puntos: [] }] };
+  roads.push(road);
+
+  const option = document.createElement("option");
+  option.value = roadName;
+  option.textContent = roadName;
+  roadSelect.appendChild(option);
+
+  roadSelect.value = roadName;
+  selectedRoad = road;
+  selectedSegment = road.segmentos[0];
   drawEditableRoad();
 }
 
-function downloadJSON() {
-  if (roads.length === 0) return alert("No hay carreteras para guardar.");
-  const dataStr = JSON.stringify({ carreteras: roads }, null, 2);
-  const blob = new Blob([dataStr], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "carreteras.json";
-  a.click();
-  URL.revokeObjectURL(url);
+function newSegment() {
+  if (!selectedRoad) { alert("Selecciona una carretera primero"); return; }
+  const seg = { puntos: [] };
+  selectedRoad.segmentos.push(seg);
+  selectedSegment = seg;
+  drawEditableRoad();
 }
 
-function loadJSON(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const content = JSON.parse(e.target.result);
-    roads = [];
-    roadCounter = 1;
-    selectedRoad = null;
-    selectedPoint = null;
-    Array.from(mapGroup.querySelectorAll(".saved, .editable, .point")).forEach(el => el.remove());
-    roadSelect.innerHTML = '<option value="">-- Ninguna --</option>';
+// --- DIBUJO ---
+function drawEditableRoad() {
+  Array.from(mapGroup.querySelectorAll(".editable,.point")).forEach(el => el.remove());
 
-    content.carreteras.forEach(c => {
-      roads.push(c);
+  // Dibujar todas las carreteras
+  roads.forEach(road => {
+    road.segmentos.forEach(seg => {
       const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-      poly.setAttribute("points", c.puntos.map(p => p.join(",")).join(" "));
-      poly.setAttribute("class", "saved");
-      poly.setAttribute("data-nombre", c.nombre);
+      poly.setAttribute("points", seg.puntos.map(p=>p.join(",")).join(" "));
+      // Si es la carretera seleccionada y el segmento es el seleccionado → naranja
+      if (road === selectedRoad && seg === selectedSegment) poly.setAttribute("class","editable selectedSegment");
+      else poly.setAttribute("class","editable"); // azul
       mapGroup.appendChild(poly);
 
-      const option = document.createElement("option");
-      option.value = c.nombre;
-      option.textContent = c.nombre;
-      roadSelect.appendChild(option);
-
-      roadCounter++;
+      // Dibujar puntos solo si es la carretera seleccionada
+      if (road === selectedRoad) {
+        seg.puntos.forEach(p => {
+          const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          c.setAttribute("cx", p[0]);
+          c.setAttribute("cy", p[1]);
+          c.setAttribute("r", 6/scale);
+          c.setAttribute("class","point");
+          if (p === selectedPoint) c.classList.add("selectedPoint");
+          mapGroup.appendChild(c);
+        });
+      }
     });
-    output.value = JSON.stringify(content, null, 2);
-    newRoad();
-  };
-  reader.readAsText(file);
+  });
+
+  output.value = JSON.stringify({ carreteras: roads }, null, 2);
+  updateTransform();
 }
 
-// --- MODIFICAR CARRETERA ---
-roadSelect.addEventListener("change", () => {
-  selectedRoad = roads.find(r => r.nombre === roadSelect.value) || null;
-  selectedPoint = null;
-  drawEditableRoad();
-});
-
-function drawEditableRoad() {
-  Array.from(mapGroup.querySelectorAll(".editable, .point")).forEach(el => el.remove());
+// --- CLIC PARA AÑADIR PUNTOS O SELECCIONAR ---
+svg.addEventListener("click", e => {
+  const {x,y} = getSVGCoords(e);
   if (!selectedRoad) return;
 
-  const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  poly.setAttribute("points", selectedRoad.puntos.map(p => p.join(",")).join(" "));
-  poly.setAttribute("class", "editable");
-  mapGroup.appendChild(poly);
-
-  selectedRoad.puntos.forEach(p => {
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", p[0]);
-    circle.setAttribute("cy", p[1]);
-    circle.setAttribute("r", 6);
-    circle.setAttribute("class", "point");
-    mapGroup.appendChild(circle);
+  // Click sobre un punto
+  let hitPoint = null;
+  selectedRoad.segmentos.forEach(seg => {
+    seg.puntos.forEach(p => {
+      if (Math.hypot(p[0]-x,p[1]-y) < 6/scale) hitPoint = p;
+    });
   });
-}
+  if (hitPoint) {
+    selectedPoint = hitPoint;
+    selectedSegment = selectedRoad.segmentos.find(s=>s.puntos.includes(hitPoint));
+    drawEditableRoad();
+    return;
+  }
 
-// --- SELECCIÓN Y MOVIMIENTO DE PUNTOS ---
-svg.addEventListener("mousedown", (e) => {
-  if (!selectedRoad) return;
-  const {x, y} = getSVGCoords(e);
-  selectedPoint = null;
-  selectedRoad.puntos.forEach(p => {
-    if (Math.hypot(p[0]-x, p[1]-y) < 6) selectedPoint = p;
+  // Click sobre un segmento
+  let hitSegment = null;
+  selectedRoad.segmentos.forEach(seg => {
+    for (let i=0;i<seg.puntos.length-1;i++){
+      let p1=seg.puntos[i], p2=seg.puntos[i+1];
+      let dist = distancePointToSegment([x,y],p1,p2);
+      if (dist<5/scale) hitSegment=seg;
+    }
   });
-  dragging = !!selectedPoint;
-  updatePointsColors();
-});
-
-svg.addEventListener("mousemove", (e) => {
-  if (!dragging || !selectedPoint) return;
-  const {x, y} = getSVGCoords(e);
-  selectedPoint[0] = x;
-  selectedPoint[1] = y;
-  drawEditableRoad();
-  updatePointsColors();
-});
-
-svg.addEventListener("mouseup", () => { dragging = false; });
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Delete" && selectedRoad && selectedPoint) {
-    selectedRoad.puntos = selectedRoad.puntos.filter(p => p !== selectedPoint);
+  if (hitSegment) {
+    selectedSegment = hitSegment;
     selectedPoint = null;
+    drawEditableRoad();
+    return;
+  }
+
+  // Añadir punto al segmento actual
+  if (selectedSegment) {
+    selectedSegment.puntos.push([x,y]);
     drawEditableRoad();
   }
 });
 
-function updatePointsColors() {
-  Array.from(mapGroup.querySelectorAll(".point")).forEach((circle, idx) => {
-    if (selectedRoad.puntos[idx] === selectedPoint) {
-      circle.setAttribute("class", "point selected");
-    } else {
-      circle.setAttribute("class", "point");
-    }
-  });
+function distancePointToSegment(p, a, b){
+  const [px,py]=p, [ax,ay]=a, [bx,by]=b;
+  const dx=bx-ax, dy=by-ay;
+  const len2=dx*dx+dy*dy;
+  if(len2===0) return Math.hypot(px-ax,py-ay);
+  let t=((px-ax)*dx+(py-ay)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
 }
-</script>
 
+// --- ARRASTRE DE PUNTOS ---
+svg.addEventListener("mousedown", e=>{ if(!selectedPoint) return; dragging=true; });
+svg.addEventListener("mousemove", e=>{ 
+  if(!dragging || !selectedPoint) return; 
+  const {x,y} = getSVGCoords(e);
+  selectedPoint[0]=x;
+  selectedPoint[1]=y;
+  drawEditableRoad();
+});
+svg.addEventListener("mouseup", ()=> dragging=false);
+
+// --- BORRADO ---
+document.addEventListener("keydown", e=>{
+  if(e.key==="Delete"){
+    if(selectedPoint && selectedSegment){
+      selectedSegment.puntos = selectedSegment.puntos.filter(p=>p!==selectedPoint);
+      selectedPoint=null;
+      drawEditableRoad();
+    } else if (selectedSegment && selectedRoad){
+      selectedRoad.segmentos = selectedRoad.segmentos.filter(s=>s!==selectedSegment);
+      selectedSegment=null;
+      drawEditableRoad();
+    }
+  }
+});
+
+// --- ELIMINAR CARRETERA ---
+function deleteRoad(){
+  if(!selectedRoad) return;
+  if(!confirm(`¿Eliminar la carretera "${selectedRoad.nombre}"?`)) return;
+  roads = roads.filter(r => r !== selectedRoad);
+  roadSelect.value="";
+  selectedRoad = selectedSegment = selectedPoint = null;
+  drawEditableRoad();
+}
+
+// --- GUARDAR Y CARGAR ---
+function saveRoad(){
+  if(!selectedRoad){ alert("No hay carretera seleccionada"); return; }
+  drawEditableRoad();
+}
+
+function downloadJSON(){
+  if (roads.length===0) return alert("No hay carreteras");
+  const blob=new Blob([JSON.stringify({carreteras:roads},null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download="carreteras.json";a.click();
+  URL.revokeObjectURL(url);
+}
+
+function loadJSON(event){
+  const file=event.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const content=JSON.parse(e.target.result);
+    roads=content.carreteras||[];
+    roadCounter=roads.length+1;
+    roadSelect.innerHTML='<option value="">-- Ninguna --</option>';
+    roads.forEach(r=>{
+      const opt=document.createElement("option");
+      opt.value=r.nombre;
+      opt.textContent=r.nombre;
+      roadSelect.appendChild(opt);
+    });
+    selectedRoad=null;
+    selectedSegment=null;
+    selectedPoint=null;
+    drawEditableRoad();
+  };
+  reader.readAsText(file);
+}
+
+roadSelect.addEventListener("change", ()=>{
+  selectedRoad=roads.find(r=>r.nombre===roadSelect.value)||null;
+  selectedSegment=selectedRoad?selectedRoad.segmentos[0]:null;
+  selectedPoint=null;
+  drawEditableRoad();
+});
+</script>
 </body>
 </html>
-
 
